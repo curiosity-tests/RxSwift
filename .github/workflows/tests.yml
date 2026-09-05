@@ -6,45 +6,50 @@ on:
       - "main"
   pull_request:
   workflow_dispatch:
+    inputs:
+      leg:
+        description: "baseline (uninstrumented) or instrumented (under chalk/curiosity)"
+        type: choice
+        options: [instrumented, baseline]
+        default: instrumented
+      profile:
+        description: "CrashOverride chalk profile"
+        type: string
+        default: curiosity-tests-racecar
+      racecar_run:
+        description: "racecar correlation token, echoed into the run name"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  # The one variable that separates the arms: on baseline, action-checkout
+  # skips its Set up Chalk step entirely.
+  CHALK_ON: ${{ github.event_name == 'workflow_dispatch' && inputs.leg != 'baseline' }}
+
+run-name: "RxSwift ${{ inputs.leg || 'push' }} ${{ inputs.racecar_run }}"
 
 jobs:
-  xcode26:
-    name: "Xcode 26"
-    runs-on: macos-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        environment: [iOS, iOS-Example, Unix, watchOS, tvOS, macCatalyst, SPM]
-
-    steps:
-      - uses: actions/checkout@v3
-      - name: Select Xcode 26
-        run: sudo xcode-select -s /Applications/Xcode_26.6.app
-      - name: Run Tests
-        run: CI=1 ./scripts/all-tests.sh "${{ matrix.environment }}"
-
-  xcode16:
-    name: "Xcode 16"
-    runs-on: macos-15
-
-    strategy:
-      fail-fast: false
-      matrix:
-        environment: [iOS, iOS-Example, Unix, watchOS, tvOS, SPM]
-
-    steps:
-      - uses: actions/checkout@v3
-      - name: Select Xcode 16
-        run: sudo xcode-select -s /Applications/Xcode_16.4.app
-      - name: Run Tests
-        run: CI=1 ./scripts/all-tests.sh "${{ matrix.environment }}"
-
   linux:
     name: "Build (Android)"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: crashappsec/action-checkout@main
+        with:
+          chalk: ${{ env.CHALK_ON }}
+          profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+          observables_continue_on_error: false
+          lfs: false
+      - name: Assert instrumentation is live
+        if: env.CHALK_ON == 'true'
+        run: |
+          test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
+          test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+
       - name: "Build Swift Package on Android"
         uses: skiptools/swift-android-action@v2
         with:
